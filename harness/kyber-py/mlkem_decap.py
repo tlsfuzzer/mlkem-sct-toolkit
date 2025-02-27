@@ -4,9 +4,9 @@ import time
 from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
 
 OIDS = {
-    (1, 3, 6, 1, 4, 1, 22554, 5, 6, 1): ML_KEM_512,
-    (1, 3, 6, 1, 4, 1, 22554, 5, 6, 2): ML_KEM_768,
-    (1, 3, 6, 1, 4, 1, 22554, 5, 6, 3): ML_KEM_1024,
+    (2, 16, 840, 1, 101, 3, 4, 4, 1): ML_KEM_512,
+    (2, 16, 840, 1, 101, 3, 4, 4, 2): ML_KEM_768,
+    (2, 16, 840, 1, 101, 3, 4, 4, 3): ML_KEM_1024,
 }
 
 import ecdsa.der as der
@@ -45,6 +45,11 @@ def mlkem_ek_der_read(ek_der):
     key_der, empty = der.remove_octet_string(rest)
     if empty != b"":
         raise der.UnexpectedDER("Trailing junk after the key")
+
+    if len(key_der) == 64:
+        _, dk = kem.key_derive(key_der)
+
+        return kem, dk
 
     keys, empty = der.remove_octet_string(key_der)
     if empty != b"":
@@ -126,7 +131,7 @@ if __name__ == '__main__':
 
                 time_start = time.monotonic_ns()
 
-                plaintext = kem.decaps(ciphertext, priv_key)
+                plaintext = kem.decaps(priv_key, ciphertext)
 
                 diff = time.monotonic_ns() - time_start
 
