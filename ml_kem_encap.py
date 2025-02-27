@@ -78,22 +78,117 @@ class CiphertextGenerator(object):
         _, encaps = self.kem.encaps(self.key)
         return encaps
 
-    types["invalid"] = 1
+    types["random"] = 1
 
-    def invalid(self, gen_id):
+    def random(self, gen_id):
         """
-        Creates an invalid ML-KEM ciphertext.
+        Creates a completely random ML-KEM ciphertext.
 
-        The ciphertext is made invalid by inverting a value or a random
-        ciphertext byte.
+        Returns amount of random bytes consistent with the set KEM.
 
         gen_id is just to have the ability to have duplicate generators
         """
+        cipher_bytes = 32 * (self.kem.du * self.kem.k + self.kem.dv)
+        return random.randbytes(cipher_bytes)
+
+    types["xor_u_coefficient"] = 2
+
+    def xor_u_coefficient(self, pos, val):
+        """
+        Creates a ML-KEM ciphertext with a modified u coefficient
+
+        Modifies the "u" part of the ciphertext by xor-ing the
+        coefficient at position pos in the ciphertext.
+
+        pos is the position of the coefficient. "0" for first one,
+        "-1" for the last one. There are k*256 coefficients.
+
+        val is the value to xor with, must be between 1 and 2**du exclusive
+        """
+        assert val > 0
+        assert val < 2 ** self.kem.du
+        if pos < 0:
+            pos %= self.kem.k * 256
         _, encaps = self.kem.encaps(self.key)
-        encaps = bytearray(encaps)
-        pos = random.randint(0, len(encaps) - 1)
-        encaps[pos] ^= 0xff
-        return encaps
+
+        n = self.kem.k * self.kem.du * 32
+        c1, c2 = encaps[:n], encaps[n:]
+
+        u = self.kem.M.decode_vector(c1, self.kem.k, self.kem.du)
+        assert len(u._data[0]) == self.kem.k
+        u._data[0][pos//256].coeffs[pos%256] ^= val
+        cx = u.encode(self.kem.du)
+        return cx + c2
+
+    types["xor_v_coefficient"] = 2
+
+    def xor_v_coefficient(self, pos, val):
+        """
+        Create a ML-KEM ciphertext with a modified v coefficient
+
+        Modifies the "v" part of the ciphertext by xor-ing the
+        coefficient at position pos in the ciphertext.
+
+        pos is the postition of the coefficient. "0" for the first one,
+        "-1" or "255" for the last one.
+
+        val is the value to xor with, must be between 1 and 2**dv exclusive
+        """
+        assert val > 0
+        assert val < 2 ** self.kem.dv
+
+        _, encaps = self.kem.encaps(self.key)
+
+        n = self.kem.k * self.kem.du * 32
+        c1, c2 = encaps[:n], encaps[n:]
+
+        v = self.kem.R.decode(c2, self.kem.dv)
+        v.coeffs[pos] ^= val
+
+        cx = v.encode(self.kem.dv)
+
+        return c1 + cx
+
+    types["one_u_remain"] = 1
+
+    def one_u_remain(self, pos):
+        """
+        Create a ML-KEM ciphertext with only one non-zero u polynomial
+
+        pos the number of the polynomial to retain, between 0 and k-1 inclusive
+        """
+        assert pos >= 0
+        assert pos < self.kem.k
+
+        u = bytearray(self.kem.k * self.kem.du * 32)
+        u[pos * self.kem.du * 32:(pos+1) * self.kem.du * 32] = \
+            random.randbytes(self.kem.du * 32)
+
+        v = random.randbytes(self.kem.dv * 32)
+
+        return bytes(u + v)
+
+    types["one_v_remain"] = 1
+
+    def one_v_remain(self, pos):
+        """
+        Create a ML-KEM ciphertext with only one non-zero v coefficient
+
+        pos the position of the coefficient to retain, between 0 and 255
+        inclusive
+        """
+        assert pos >= -256
+        assert pos <= 255
+
+        u = random.randbytes(self.kem.k * self.kem.du * 32)
+
+        v = self.kem.R.decode(bytes(self.kem.dv * 32), self.kem.dv)
+        v.coeffs[pos] = random.randint(0, 2 ** self.kem.dv - 1)
+
+        cx = v.encode(self.kem.dv)
+
+        return u + cx
+
 
 def help_msg():
     print(
