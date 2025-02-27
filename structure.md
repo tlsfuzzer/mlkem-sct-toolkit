@@ -32,7 +32,12 @@ ByteDecode and ByteEncode inputs and outputs
 
 Compress and Decompress inputs and outputs
 ------------------------------------------
-- 
+- number of zero values fed to reduction modulo
+- bit sizes of values fed to reduction modulo
+  - max bit size?
+  - weighted average of counts of different bit sizes?
+  - sum of bit sizes
+  - (see KyberSlash)
 
 Comparison between ciphertext and reconstructed ciphertext
 ----------------------------------------------------------
@@ -44,7 +49,6 @@ Multiplication of polynomials
 -----------------------------
 - 0, 1 as one of the attacker-controlled values
 - number of reductions necessary
-
 
 References
 ==========
