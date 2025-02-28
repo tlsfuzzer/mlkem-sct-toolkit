@@ -112,6 +112,8 @@ def help_msg():
     print("                values. Creates separate measurements.csv files")
     print("                for the d, p, q, dP, dQ, and qInv values.")
     print("                Contents must be concatenated PKCS#8 PEM keys.")
+    print(" --ml-kem-keys FILE Analyse the time based on ML-KEM keys and")
+    print("                ciphertexts.")
     print(" --workers num  Number of worker processes to use for")
     print("                parallelizable computation. More workers")
     print("                will finish analysis faster, but will require")
@@ -176,6 +178,7 @@ def main():
     workers = None
     max_bit_size = None
     verbose = False
+    ml_kem_keys = None
 
     argv = sys.argv[1:]
 
@@ -192,7 +195,8 @@ def main():
                                 "value-endianness=", "priv-key-ecdsa=",
                                 "clock-frequency=", "hash-func=",
                                 "skip-invert", "workers=", "rsa-keys=",
-                                "max-bit-size=", "verbose"])
+                                "max-bit-size=", "verbose",
+                                "ml-kem-keys="])
     for opt, arg in opts:
         if opt == '-l':
             logfile = arg
@@ -236,6 +240,8 @@ def main():
             value_endianness = arg
         elif opt == "--rsa-keys":
             rsa_keys = arg
+        elif opt == "--ml-kem-keys":
+            ml_kem_keys = arg
         elif opt == "--priv-key-ecdsa":
             priv_key = arg
             if not key_type:
@@ -279,7 +285,7 @@ def main():
         raise ValueError(
             "Only 'little' and 'big' endianess supported")
 
-    if not all([any([logfile, sigs, rsa_keys, values]), output]):
+    if not all([any([logfile, sigs, rsa_keys, ml_kem_keys, values]), output]):
         raise ValueError(
             "Specifying either logfile, rsa keys, raw sigs or raw values "
             "and output is mandatory")
@@ -292,10 +298,10 @@ def main():
             "When doing signature extraction, times file, data file, "
             "data size, signatures file and one private key are necessary.")
 
-    if values and not all([values, priv_key, raw_times, data]):
-        raise ValueError(
-            "When doing ECDH secret extraction, times file, data file, "
-            "secrets file, and one private key are necessary.")
+    #if values and not all([values, priv_key, raw_times, data]):
+    #    raise ValueError(
+    #        "When doing ECDH secret extraction, times file, data file, "
+    #        "secrets file, and one private key are necessary.")
 
     if hash_func_name == None:
         if prehashed:
@@ -322,7 +328,8 @@ def main():
         key_type=key_type, frequency=freq, hash_func=hash_func,
         workers=workers, verbose=verbose, rsa_keys=rsa_keys,
         sig_format=sig_format, values=values, value_size=value_size,
-        value_endianness=value_endianness, max_bit_size=max_bit_size
+        value_endianness=value_endianness, max_bit_size=max_bit_size,
+        ml_kem_keys=ml_kem_keys
     )
     extract.parse()
 
@@ -345,6 +352,9 @@ def main():
     if rsa_keys:
         extract.process_rsa_keys()
 
+    if ml_kem_keys:
+        extract.process_ml_kem_keys()
+
 
 class Extract:
     """Extract timing information from packet capture."""
@@ -359,7 +369,7 @@ class Extract:
                  hash_func=hashlib.sha256, workers=None, verbose=False,
                  fin_as_resp=False, rsa_keys=None, sig_format="DER",
                  values=None, value_size=None, value_endianness="little",
-                 max_bit_size=None):
+                 max_bit_size=None, ml_kem_keys=None):
         """
         Initialises instance and sets up class name generator from log.
 
@@ -447,6 +457,7 @@ class Extract:
         self.value_size = value_size
         self.value_endianness = value_endianness
         self.max_bit_size = max_bit_size
+        self.ml_kem_keys = ml_kem_keys
 
         if sig_format not in ["DER", "RAW"]:
             raise ValueError(
@@ -1783,6 +1794,150 @@ class Extract:
         finally:
             if rsa_keys:
                 rsa_keys.close()
+            for i in value_names:
+                if measurements[i]:
+                    measurements[i].close()
+
+    def _parse_pem_ml_kem_key(self, dk_pem):
+        from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
+
+        OIDS = {
+            (2, 16, 840, 1, 101, 3, 4, 4, 1): ML_KEM_512,
+            (2, 16, 840, 1, 101, 3, 4, 4, 2): ML_KEM_768,
+            (2, 16, 840, 1, 101, 3, 4, 4, 3): ML_KEM_1024,
+        }
+
+        import ecdsa.der as der
+
+        dk_der = der.unpem(dk_pem)
+
+        s1, empty = der.remove_sequence(dk_der)
+        if empty != b"":
+            raise der.UnexpectedDER("Trailing junk after DER public key")
+
+        ver, rest = der.remove_integer(s1)
+
+        if ver != 0:
+            raise der.UnexpectedDER("Unexpected format version")
+
+        alg_id, rest = der.remove_sequence(rest)
+
+        alg_id, empty = der.remove_object(alg_id)
+        if alg_id not in OIDS:
+            raise der.UnexpectedDER(f"Not recognised algoritm OID: {alg_id}")
+        if empty != b"":
+            raise der.UnexpectedDER("parameters specified for ML-KEM OID")
+
+        kem = OIDS[alg_id]
+
+        key, empty = der.remove_octet_string(rest)
+        if empty != b"":
+            raise der.UnexpectedDER("Trailing junk after the key")
+
+        assert len(key) == 64
+        _, dk = kem.key_derive(key)
+
+        return kem, dk
+
+    def _read_ml_kem_key(self, file):
+        lines = []
+        while True:
+            line = file.readline()
+            # empty line still has '\n', only EOF is an empty string
+            if not line:
+                return None
+            line = line.strip()
+            if line == "-----BEGIN PRIVATE KEY-----":
+                lines.append(line)
+                break
+        while True:
+            line = file.readline()
+            if not line:
+                raise ValueError("Truncated private key file!")
+            line = line.strip()
+            if line == "-----BEGIN PRIVATE KEY-----":
+                raise ValueError("Inconsistent private key file!")
+            lines.append(line)
+            if line == "-----END PRIVATE KEY-----":
+                break
+
+        one_pem_key = "\n".join(lines)
+
+        return self._parse_pem_ml_kem_key(one_pem_key)
+
+    def process_ml_kem_keys(self):
+        # list of values for the summary statistics of intermediate values
+        values = []
+        times = []
+        max_len = 20
+
+        tuple_num = 0
+
+        value_names = ('hw-m-prime', 'hw-r-prime')
+
+        ml_kem_keys = None
+        ciphertexts = None
+        measurements = dict((i, None) for i in value_names)
+
+        times_iterator = self._get_time_from_file()
+
+        try:
+            ml_kem_keys = open(self.ml_kem_keys, "rt")
+            for i in value_names:
+                f_name = join(self.output, f"measurements-{i}.csv")
+                measurements[i] = open(f_name, "wt")
+
+            kem, key = self._read_ml_kem_key(ml_kem_keys)
+
+            value_size = 32 * (kem.du * kem.k + kem.dv)
+
+            ciphertexts = open(self.values, "rb")
+
+            while True:
+                ciphertext = ciphertexts.read(value_size)
+
+                if ciphertext:
+                    dk_pke = key[0:384 * kem.k]
+                    h = key[768 * kem.k + 32 : 768 * kem.k + 64]
+                    m_prime = kem._k_pke_decrypt(dk_pke, ciphertext)
+
+                    v = dict()
+                    v['hw-m-prime'] = bit_count(bytesToNumber(m_prime))
+
+                    _, r_prime = kem._G(m_prime + h)
+
+                    v['hw-r-prime'] = bit_count(bytesToNumber(r_prime))
+
+                    values.append(v)
+                    times.append(next(times_iterator))
+
+                if len(values) >= max_len or (not ciphertext and times):
+                    for v_n in value_names:
+                        keys = set(v[v_n] for v in values)
+                        size_and_time = sorted(zip(
+                            (v[v_n] for v in values), times))
+
+                        for k in sorted(keys):
+                            to_select = [i for i in size_and_time if i[0] == k]
+                            # since sometimes for the same key we can have
+                            # multiple values, write a randomly selected one
+                            selected = choice(to_select)
+                            measurements[v_n].write("{0},{1},{2}\n".format(
+                                tuple_num, selected[0], selected[1]))
+
+                    values = []
+                    times = []
+                    tuple_num += 1
+
+                if not ciphertext:
+                    break
+
+        finally:
+            if ml_kem_keys:
+                ml_kem_keys.close()
+            if ciphertexts:
+                ciphertexts.close()
+
             for i in value_names:
                 if measurements[i]:
                     measurements[i].close()
