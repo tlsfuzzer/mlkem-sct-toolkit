@@ -5,6 +5,6 @@ PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ml_kem_encap.
 
 PYTHONPATH=../tlsfuzzer taskset --cpu-list 0 ../tlsfuzzer/venv-py3-opt-deps/bin/python3 harness/kyber-py/mlkem_decap.py -i test-dir/ciphers.bin -o test-dir/raw_times.csv -k ml-kem-768-dk.pem -n 1088
 
-PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ../tlsfuzzer/tlsfuzzer/extract.py -o test-dir -l test-dir/log.csv --raw-time test-dir/raw_times.csv --clock-frequency 1000PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ../tlsfuzzer/tlsfuzzer/extract.py -o test-dir -l test-dir/log.csv --raw-time test-dir/raw_times.csv --clock-frequency 1000
+PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ../tlsfuzzer/tlsfuzzer/extract.py -o test-dir -l test-dir/log.csv --raw-time test-dir/raw_times.csv --clock-frequency 1000
 
 PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ../tlsfuzzer/tlsfuzzer/analysis.py -o test-dir --verbose
