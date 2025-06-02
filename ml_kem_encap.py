@@ -4,7 +4,7 @@ import getopt
 import ecdsa.der as der
 import random
 from threading import Thread, Event
-from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
+from kyber_py.ml_kem.pkcs import ek_from_pem
 from tlsfuzzer.utils.log import Log
 from tlsfuzzer.utils.progress_report import progress_report
 
@@ -12,48 +12,6 @@ from tlsfuzzer.utils.progress_report import progress_report
 if sys.version_info < (3, 8):
     print("This script is compatible with Python 3.8 and later only")
     sys.exit(1)
-
-
-OIDS = {
-    (2, 16, 840, 1, 101, 3, 4, 4, 1): ML_KEM_512,
-    (2, 16, 840, 1, 101, 3, 4, 4, 2): ML_KEM_768,
-    (2, 16, 840, 1, 101, 3, 4, 4, 3): ML_KEM_1024,
-}
-
-
-def read_ml_kem_pubkey_pem(ek_pem):
-    ek_der = der.unpem(ek_pem)
-    return read_ml_kem_pubkey_der(ek_der)
-
-
-def read_ml_kem_pubkey_der(ek_der):
-    s1, empty = der.remove_sequence(ek_der)
-    if empty != b"":
-        raise der.UnexpectedDER("Trailing junk after DER public key")
-
-    alg_id, rem = der.remove_sequence(s1)
-
-    alg_id, rest = der.remove_object(alg_id)
-    if alg_id not in OIDS:
-        raise der.UnexpectedDER(f"Not recognised algoritm OID: {alg_id}")
-
-    if rest != b"":
-        raise der.UnexpectedDER("parameters specified for ML-KEM OID")
-
-    kem = OIDS[alg_id]
-
-    key, empty = der.remove_bitstring(rem, 0)
-    if empty != b"":
-        raise der.UnexpectedDER("Trailing junk after the public key bitstring")
-
-    return kem, key
-
-def read_ml_key_from_file(filename):
-
-    with open(filename, "rt") as ek_file:
-        ek_pem = ek_file.read()
-
-    return read_ml_kem_pubkey_pem(ek_pem)
 
 
 class CiphertextGenerator(object):
@@ -313,7 +271,8 @@ if __name__ == "__main__":
                                               "force", "verbose"])
     for opt, arg in opts:
         if opt == "-c":
-            kem, key = read_ml_key_from_file(arg)
+            with open(arg, "r") as key_fd:
+                kem, key = ek_from_pem(key_fd.read())
         elif opt == "-o":
             out_dir = arg
         elif opt == "--help":

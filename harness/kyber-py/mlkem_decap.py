@@ -1,65 +1,7 @@
 import sys
 import getopt
 import time
-from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
-
-OIDS = {
-    (2, 16, 840, 1, 101, 3, 4, 4, 1): ML_KEM_512,
-    (2, 16, 840, 1, 101, 3, 4, 4, 2): ML_KEM_768,
-    (2, 16, 840, 1, 101, 3, 4, 4, 3): ML_KEM_1024,
-}
-
-import ecdsa.der as der
-
-def mlkem_ek_file_read(filename):
-    with open(filename, "rt") as ek_file:
-        ek_pem = ek_file.read()
-
-    return mlkem_ek_pem_read(ek_pem)
-
-def mlkem_ek_pem_read(ek_pem):
-    ek_der = der.unpem(ek_pem)
-    return mlkem_ek_der_read(ek_der)
-
-
-def mlkem_ek_der_read(ek_der):
-    s1, empty = der.remove_sequence(ek_der)
-    if empty != b"":
-        raise der.UnexpectedDER("Trailing junk after DER public key")
-
-    ver, rest = der.remove_integer(s1)
-
-    if ver != 0:
-        raise der.UnexpectedDER("Unexpected format version")
-
-    alg_id, rest = der.remove_sequence(rest)
-
-    alg_id, empty = der.remove_object(alg_id)
-    if alg_id not in OIDS:
-        raise der.UnexpectedDER(f"Not recognised algoritm OID: {alg_id}")
-    if empty != b"":
-        raise der.UnexpectedDER("parameters specified for ML-KEM OID")
-
-    kem = OIDS[alg_id]
-
-    key_der, empty = der.remove_octet_string(rest)
-    if empty != b"":
-        raise der.UnexpectedDER("Trailing junk after the key")
-
-    if len(key_der) == 64:
-        _, dk = kem.key_derive(key_der)
-
-        return kem, dk
-
-    keys, empty = der.remove_octet_string(key_der)
-    if empty != b"":
-        raise der.UnexpectedDER("Trailing junk after the key")
-
-    dk_len = 768 * kem.k + 96
-    dk, ek = keys[:dk_len], keys[dk_len:]
-    assert len(ek) == 384 * kem.k + 32
-
-    return kem, dk
+from kyber_py.ml_kem.pkcs import dk_from_pem
 
 
 def help_msg():
@@ -69,7 +11,7 @@ timing.py -i file -o file -k file -n size
 -i file      File with the ciphertexts to decrypt
 -o file      File to write the timing data to
 -k file      The private key to use for decryption
--n size      Size of individual ciphertexts for decryption
+-n size      Size of individual ciphertexts for decryption (768, 1088 or 1568)
 -h | --help  this message
 """)
 
@@ -118,7 +60,8 @@ if __name__ == '__main__':
         print("ERROR: size of ciphertexts unspecified (-n)", file=sys.stderr)
         sys.exit(1)
 
-    kem, priv_key = mlkem_ek_file_read(key_file)
+    with open(key_file, "r") as key_fd:
+        kem, priv_key, _, _ = dk_from_pem(key_fd.read())
 
     with open(in_file, "rb") as in_fd:
         with open(out_file, "w") as out_fd:
