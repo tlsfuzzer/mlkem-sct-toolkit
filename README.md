@@ -8,3 +8,8 @@ PYTHONPATH=../tlsfuzzer taskset --cpu-list 0 ../tlsfuzzer/venv-py3-opt-deps/bin/
 PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ../tlsfuzzer/tlsfuzzer/extract.py -o test-dir -l test-dir/log.csv --raw-time test-dir/raw_times.csv --clock-frequency 1000
 
 PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ../tlsfuzzer/tlsfuzzer/analysis.py -o test-dir --verbose
+
+
+====
+
+PYTHONPATH=~/dev/tlsfuzzer:~/dev/kyber-py/src/ ~/dev/tlsfuzzer/venv-py3-opt-deps/bin/python extract.py -o test-dir --ml-kem-keys ml-kem-768-dk.pem --raw-values test-dir/ciphers.bin -l test-dir/log.csv --raw-time test-dir/raw_times.csv --clock-frequency 1000

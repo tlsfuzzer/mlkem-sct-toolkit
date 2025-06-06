@@ -33,18 +33,13 @@ from tlsfuzzer.utils.progress_report import progress_report
 from tlsfuzzer.utils.compat import bit_count
 from tlslite.utils.cryptomath import bytesToNumber, numberToByteArray
 from tlslite.utils.python_key import Python_Key
+from tlslite.utils.compat import bit_length
 
 try:
     from itertools import izip
 except ImportError: # will be 3.x series
     izip = zip
 
-if sys.version_info >= (3, 10):
-    def bit_count(n):
-        return n.bit_count()
-else:
-    def bit_count(n):
-        return bin(n).count("1")
 
 WAIT_FOR_FIRST_BARE_MAX_VALUE = 0
 WAIT_FOR_NON_BARE_MAX_VALUE = 1
@@ -1799,43 +1794,9 @@ class Extract:
                     measurements[i].close()
 
     def _parse_pem_ml_kem_key(self, dk_pem):
-        from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
+        from kyber_py.ml_kem.pkcs import dk_from_pem
 
-        OIDS = {
-            (2, 16, 840, 1, 101, 3, 4, 4, 1): ML_KEM_512,
-            (2, 16, 840, 1, 101, 3, 4, 4, 2): ML_KEM_768,
-            (2, 16, 840, 1, 101, 3, 4, 4, 3): ML_KEM_1024,
-        }
-
-        import ecdsa.der as der
-
-        dk_der = der.unpem(dk_pem)
-
-        s1, empty = der.remove_sequence(dk_der)
-        if empty != b"":
-            raise der.UnexpectedDER("Trailing junk after DER public key")
-
-        ver, rest = der.remove_integer(s1)
-
-        if ver != 0:
-            raise der.UnexpectedDER("Unexpected format version")
-
-        alg_id, rest = der.remove_sequence(rest)
-
-        alg_id, empty = der.remove_object(alg_id)
-        if alg_id not in OIDS:
-            raise der.UnexpectedDER(f"Not recognised algoritm OID: {alg_id}")
-        if empty != b"":
-            raise der.UnexpectedDER("parameters specified for ML-KEM OID")
-
-        kem = OIDS[alg_id]
-
-        key, empty = der.remove_octet_string(rest)
-        if empty != b"":
-            raise der.UnexpectedDER("Trailing junk after the key")
-
-        assert len(key) == 64
-        _, dk = kem.key_derive(key)
+        kem, dk, _, _ = dk_from_pem(dk_pem)
 
         return kem, dk
 
@@ -1865,6 +1826,83 @@ class Extract:
 
         return self._parse_pem_ml_kem_key(one_pem_key)
 
+    def _ml_kem_k_pke_decrypt_with_intermediates(self, kem, dk_pke, c, values):
+        n = kem.k * kem.du * 32
+        c1, c2 = c[:n], c[n:]
+
+        u = kem.M.decode_vector(c1, kem.k, kem.du).decompress(kem.du)
+        v = kem.R.decode(c2, kem.dv).decompress(kem.dv)
+        s_hat = kem.M.decode_vector(dk_pke, kem.k, 12, is_ntt=True)
+
+        u_hat = u.to_ntt()
+        s_hat_dot_u_hat = s_hat.dot(u_hat)
+        values['hw-s-hat-dot-u-hat'] = sum(bit_count(i) for i in s_hat_dot_u_hat.coeffs)
+        values['bit-size-s-hat-dot-u-hat'] = sum(bit_length(i) for i in s_hat_dot_u_hat)
+        w = v - (s_hat_dot_u_hat).from_ntt()
+
+        #print("====================")
+        #print(dir(w))
+        #print(w.coeffs)
+        #print(sum(i == 0 for i in w.coeffs))
+        #print(sum(i >= 3329 for i in w.coeffs))
+        values['hw-w'] = sum(bit_count(i) for i in w.coeffs)
+        values['bit-size-w'] = sum(bit_length(i) for i in w.coeffs)
+        values['bit-size-min-w'] = min(bit_length(i) for i in w.coeffs)
+
+        m = w.compress(1).encode(1)
+
+        return m
+
+    def _ml_kem_decaps_with_intermediates(self, kem, dk, c):
+        """
+        Perform ML-KEM decapsulation, return also metadata about intermediate
+        values of the algorithm.
+        """
+        values = dict()
+
+        if len(c) != 32 * (kem.du * kem.k + kem.dv):
+            raise ValueError("wrong ciphertext length")
+        if len(dk) != kem._dk_size():
+            raise ValueError("wrong decapsulation key length")
+
+        dk_pke = dk[0:384 * kem.k]
+        ek_pke = dk[384 * kem.k : 768 * kem.k + 32]
+        h = dk[768 * kem.k + 32 : 768 * kem.k + 64]
+        z = dk[768 * kem.k + 64 :]
+        m_prime = self._ml_kem_k_pke_decrypt_with_intermediates(
+            kem, dk_pke, c, values)
+
+        values['hw-m-prime'] = bit_count(bytesToNumber(m_prime))
+
+        K_prime, r_prime = kem._G(m_prime + h)
+
+        values['hw-r-prime'] = bit_count(bytesToNumber(r_prime))
+
+        K_bar = kem._J(z + c)
+
+        c_prime = kem._k_pke_encrypt(ek_pke, m_prime, r_prime)
+
+        values['hw-c-prime'] = bit_count(bytesToNumber(c_prime))
+
+        values['hd-c-c-prime'] = bit_count(bytesToNumber(c) ^ bytesToNumber(c_prime))
+
+        for i, a, b in zip(range(len(c)), c, c_prime):
+            if a != b:
+                break
+        else:
+            i = -1
+        values['first-diff-c-c-prime'] = i
+        diff = -1
+        for i, a, b in zip(range(len(c)), c, c_prime):
+            if a != b:
+                diff = i
+        values['last-diff-c-c-prime'] = diff
+
+        if c == c_prime:
+            return K_prime, values
+        else:
+            return K_bar, values
+
     def process_ml_kem_keys(self):
         # list of values for the summary statistics of intermediate values
         values = []
@@ -1873,7 +1911,10 @@ class Extract:
 
         tuple_num = 0
 
-        value_names = ('hw-m-prime', 'hw-r-prime')
+        value_names = ('hw-m-prime', 'hw-r-prime', 'hw-w', 'bit-size-w',
+                       'hw-s-hat-dot-u-hat', 'bit-size-s-hat-dot-u-hat',
+                       'bit-size-min-w', 'hw-c-prime', 'hd-c-c-prime',
+                       'first-diff-c-c-prime', 'last-diff-c-c-prime')
 
         ml_kem_keys = None
         ciphertexts = None
@@ -1897,20 +1938,18 @@ class Extract:
                 ciphertext = ciphertexts.read(value_size)
 
                 if ciphertext:
-                    dk_pke = key[0:384 * kem.k]
-                    h = key[768 * kem.k + 32 : 768 * kem.k + 64]
-                    m_prime = kem._k_pke_decrypt(dk_pke, ciphertext)
 
-                    v = dict()
-                    v['hw-m-prime'] = bit_count(bytesToNumber(m_prime))
+                    ss, v = self._ml_kem_decaps_with_intermediates(
+                        kem, key, ciphertext)
 
-                    _, r_prime = kem._G(m_prime + h)
-
-                    v['hw-r-prime'] = bit_count(bytesToNumber(r_prime))
+                    # TODO compare the the gotten shared secret with the
+                    # expected value
 
                     values.append(v)
                     times.append(next(times_iterator))
 
+                # if we didn't read a new ciphertext we still need to dump
+                # the values to files
                 if len(values) >= max_len or (not ciphertext and times):
                     for v_n in value_names:
                         keys = set(v[v_n] for v in values)
