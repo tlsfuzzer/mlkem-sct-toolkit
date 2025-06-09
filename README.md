@@ -10,6 +10,11 @@ https://github.com/tomato42/marvin-toolkit/
 Very rough steps to follow:
 ----------------
 
+Create private keys for the harness to use:
+```
+openssl genpkey -algorithm ml-kem-768 -out ml-kem-768-dk.pem
+openssl pkey -pubout -in ml-kem-768-dk.pem -out ml-kem-768-ek.pem
+```
 Generate test vectors:
 ```
 PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ml_kem_encap.py --force -o test-dir/ -c ml-kem-768-ek.pem --repeat 10000 valid=0 valid=1 valid=2 random=0 random=1 xor_u_coefficient="0 1" xor_u_coefficient="-1 1" xor_v_coefficient="0 1" xor_v_coefficient="-1 1" one_u_remain=0 one_u_remain=1 one_u_remain=2 one_v_remain=0 one_v_remain=-1
