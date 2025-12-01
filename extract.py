@@ -1922,6 +1922,8 @@ class Extract:
 
         times_iterator = self._get_time_from_file()
 
+        progress = None
+
         try:
             ml_kem_keys = open(self.ml_kem_keys, "rt")
             for i in value_names:
@@ -1934,42 +1936,65 @@ class Extract:
 
             ciphertexts = open(self.values, "rb")
 
-            while True:
-                ciphertext = ciphertexts.read(value_size)
+            ciphertexts
+            try:
+                ciphertexts.seek(0, 2)
+                exp_len = ciphertexts.tell()
+                ciphertexts.seek(0, 0)
+                status = [0, exp_len, Event()]
+                if self.verbose:
+                    kwargs = {}
+                    kwargs['unit'] = 'B'
+                    kwargs['prefix'] = 'binary'
+                    kwargs['delay'] = self.delay
+                    kwargs['end'] = self.carriage_return
+                    progress = Thread(target=progress_report, args=(status,),
+                                      kwargs=kwargs)
+                    progress.start()
 
-                if ciphertext:
 
-                    ss, v = self._ml_kem_decaps_with_intermediates(
-                        kem, key, ciphertext)
+                while True:
+                    ciphertext = ciphertexts.read(value_size)
+                    status[0] = ciphertexts.tell()
 
-                    # TODO compare the the gotten shared secret with the
-                    # expected value
+                    if ciphertext:
 
-                    values.append(v)
-                    times.append(next(times_iterator))
+                        ss, v = self._ml_kem_decaps_with_intermediates(
+                            kem, key, ciphertext)
 
-                # if we didn't read a new ciphertext we still need to dump
-                # the values to files
-                if len(values) >= max_len or (not ciphertext and times):
-                    for v_n in value_names:
-                        keys = set(v[v_n] for v in values)
-                        size_and_time = sorted(zip(
-                            (v[v_n] for v in values), times))
+                        # TODO compare the the gotten shared secret with the
+                        # expected value
 
-                        for k in sorted(keys):
-                            to_select = [i for i in size_and_time if i[0] == k]
-                            # since sometimes for the same key we can have
-                            # multiple values, write a randomly selected one
-                            selected = choice(to_select)
-                            measurements[v_n].write("{0},{1},{2}\n".format(
-                                tuple_num, selected[0], selected[1]))
+                        values.append(v)
+                        times.append(next(times_iterator))
 
-                    values = []
-                    times = []
-                    tuple_num += 1
+                    # if we didn't read a new ciphertext we still need to dump
+                    # the values to files
+                    if len(values) >= max_len or (not ciphertext and times):
+                        for v_n in value_names:
+                            keys = set(v[v_n] for v in values)
+                            size_and_time = sorted(zip(
+                                (v[v_n] for v in values), times))
 
-                if not ciphertext:
-                    break
+                            for k in sorted(keys):
+                                to_select = [i for i in size_and_time if i[0] == k]
+                                # since sometimes for the same key we can have
+                                # multiple values, write a randomly selected one
+                                selected = choice(to_select)
+                                measurements[v_n].write("{0},{1},{2}\n".format(
+                                    tuple_num, selected[0], selected[1]))
+
+                        values = []
+                        times = []
+                        tuple_num += 1
+
+                    if not ciphertext:
+                        break
+            finally:
+                status[2].set()
+                if self.verbose:
+                    progress.join()
+                print()
 
         finally:
             if ml_kem_keys:

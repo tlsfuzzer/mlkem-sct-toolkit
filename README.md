@@ -23,10 +23,14 @@ Run the system under test/test harness
 ```
 PYTHONPATH=../tlsfuzzer taskset --cpu-list 0 ../tlsfuzzer/venv-py3-opt-deps/bin/python3 harness/kyber-py/mlkem_decap.py -i test-dir/ciphers.bin -o test-dir/raw_times.csv -k ml-kem-768-dk.pem -n 1088
 ```
+
+Note: ciphertext sizes: ML-KEM-512: 768, ML-KEM-768: 1088, ML-KEM-1024: 1568
+
 Extract the data:
 ```
 PYTHONPATH=../tlsfuzzer ../tlsfuzzer/venv-py3-opt-deps/bin/python3 ../tlsfuzzer/tlsfuzzer/extract.py -o test-dir -l test-dir/log.csv --raw-time test-dir/raw_times.csv --clock-frequency 1000
 ```
+
 or, with extracting of the intermediate values:
 ```
 PYTHONPATH=~/dev/tlsfuzzer:~/dev/kyber-py/src/ ~/dev/tlsfuzzer/venv-py3-opt-deps/bin/python extract.py -o test-dir --ml-kem-keys ml-kem-768-dk.pem --raw-values test-dir/ciphers.bin -l test-dir/log.csv --raw-time test-dir/raw_times.csv --clock-frequency 1000
