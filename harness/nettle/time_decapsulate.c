@@ -164,9 +164,27 @@ static bool pem_read_privkey(FILE *fp, uint8_t **data, size_t size)
     return true;
 }
 
+struct vtable {
+    size_t private_key_size;
+    size_t (*decap_itch)(void);
+    void (*decap)(const uint8_t *key, uint8_t *secret,
+                  const uint8_t *ciphertext, uint16_t *scratch);
+};
+
+const struct vtable ml_kem_768_vtable = {
+    .private_key_size = ML_KEM_768_PRIVATE_KEY_SIZE,
+    .decap_itch = ml_kem_768_decap_itch,
+    .decap = ml_kem_768_decap,
+};
+
+const struct vtable ml_kem_1024_vtable = {
+    .private_key_size = ML_KEM_1024_PRIVATE_KEY_SIZE,
+    .decap_itch = ml_kem_1024_decap_itch,
+    .decap = ml_kem_1024_decap,
+};
+
 int main(int argc, char *argv[]) {
     int result = 1, r_ret;
-    size_t key_len = 0;
     size_t ciphertext_len = 0;
     FILE *fp;
     char *key_file_name = NULL, *in_file_name = NULL, *out_file_name = NULL;
@@ -177,7 +195,7 @@ int main(int argc, char *argv[]) {
     uint16_t *scratch = NULL;
     int opt;
     uint64_t time_before, time_after, time_diff;
-    const struct ml_kem_params *params;
+    const struct vtable *vtable;
 
     while ((opt = getopt(argc, argv, "i:o:k:n:h")) != -1 ) {
         switch (opt) {
@@ -213,12 +231,10 @@ int main(int argc, char *argv[]) {
 
     switch (ciphertext_len) {
     case ML_KEM_768_CIPHERTEXT_SIZE:
-        params = nettle_get_ml_kem_768_params();
-        key_len = ML_KEM_768_PRIVATE_KEY_SIZE;
+        vtable = &ml_kem_768_vtable;
         break;
     case ML_KEM_1024_CIPHERTEXT_SIZE:
-        params = nettle_get_ml_kem_1024_params();
-        key_len = ML_KEM_1024_PRIVATE_KEY_SIZE;
+        vtable = &ml_kem_1024_vtable;
         break;
     default:
         fprintf(stderr, "Unsupported ciphertext length: %zu\n",
@@ -244,7 +260,7 @@ int main(int argc, char *argv[]) {
         goto err;
 
     fprintf(stderr, "malloc(scratch)\n");
-    scratch = calloc(ml_kem_decap_itch(params), sizeof(uint16_t));
+    scratch = calloc(vtable->decap_itch(), sizeof(uint16_t));
     if (!scratch)
         goto err;
 
@@ -255,7 +271,7 @@ int main(int argc, char *argv[]) {
         goto err;
     }
 
-    if (!pem_read_privkey(fp, &key, key_len)) {
+    if (!pem_read_privkey(fp, &key, vtable->private_key_size)) {
         fprintf(stderr, "can't read key file %s\n", key_file_name);
         goto err;
     }
@@ -275,7 +291,7 @@ int main(int argc, char *argv[]) {
 
         time_before = get_time_before();
 
-        ml_kem_decap(params, key, secret, ciphertext, scratch);
+        vtable->decap(key, secret, ciphertext, scratch);
 
         time_after = get_time_after();
 
